@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+import sys, os
+import glob
+import psycopg2
+import argparse
+import json
+
+
+def main():
+    args = get_args()
+    query_file_paths = get_queries(args.queries_folder)
+    executor = get_executor(args)
+
+    for query_file_path in query_file_paths:
+        with open(query_file_path) as query_file:
+            print(
+                query_name(query_file_path),
+                ':',
+                executor.execute_query(query_file.read())
+            )
+            ## How does the data get into Notion now...
+
+def query_name(query_file_path):
+    base = os.path.basename(query_file_path)
+    if base.endswith('.sql'):
+        return base.rstrip('.sql')
+    else:
+        return base
+
+def get_executor(args):
+    if args.dbtype == 'postgres':
+        connection = psycopg2.connect(
+            dbname=args.dbname,
+            user=args.user,
+            password=args.password,
+            host=args.host,
+            port=args.port,
+        )
+        return PostgresExecutor(connection)
+
+def get_queries(folder_path):
+    for file_path in os.listdir(folder_path):
+        if file_path.endswith('.sql'):
+            yield os.path.join(folder_path, file_path)
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--dbtype', choices=['postgres'], default=None)
+
+    parser.add_argument('--dbname', type=str, default=None)
+    parser.add_argument('--user', type=str, default=None)
+    parser.add_argument('--password', type=str, default=None)
+    parser.add_argument('--host', type=str, default=None)
+    parser.add_argument('--port', type=str, default=None)
+
+    parser.add_argument('--queries-folder', type=str, default=None)
+
+    return parser.parse_args()
+
+class PostgresExecutor:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def _execute_query(self, query_string):
+        cursor = self.connection.cursor()
+        cursor.execute(query_string)
+        return cursor.fetchall()
+
+    def _get_number_result(self, query_string):
+        result = self._execute_query(query_string)
+        return result[0][0]
+
+    def execute_query(self, query_string):
+        return self._get_number_result(query_string)
+
+if __name__ == '__main__':
+    main()
