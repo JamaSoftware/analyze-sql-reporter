@@ -1,42 +1,35 @@
 #!/usr/bin/env python3
-import sys, os
-import glob
-import psycopg2
+import os
 import argparse
-import json
+import sys
+import datetime
 
+import requests
 
 def main():
     args = get_args()
-    query_file_paths = get_queries(args.queries_folder)
     executor = get_executor(args)
+    reporter = Reporter(args.api_key, args.notion_host)
 
+    query_file_paths = get_queries(args.queries_folder)
     for query_file_path in query_file_paths:
         with open(query_file_path) as query_file:
-            print(
-                query_name(query_file_path),
-                ':',
-                executor.execute_query(query_file.read())
-            )
-            ## How does the data get into Notion now...
+            ingredient_key = query_name(query_file_path, executor.extension)
+            value = executor.execute_query(query_file.read())
 
-def query_name(query_file_path):
+            print(f'{ingredient_key} : {value}')
+
+            reporter.report(ingredient_key, value)
+
+def query_name(query_file_path, extension):
     base = os.path.basename(query_file_path)
-    if base.endswith('.sql'):
-        return base.rstrip('.sql')
+    if base.endswith(extension):
+        return base.rstrip(extension)
     else:
         return base
 
 def get_executor(args):
-    if args.dbtype == 'postgres':
-        connection = psycopg2.connect(
-            dbname=args.dbname,
-            user=args.user,
-            password=args.password,
-            host=args.host,
-            port=args.port,
-        )
-        return PostgresExecutor(connection)
+    return db_types[args.dbtype](args)
 
 def get_queries(folder_path):
     for file_path in os.listdir(folder_path):
@@ -45,7 +38,7 @@ def get_queries(folder_path):
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--dbtype', choices=['postgres'], default=None)
+    parser.add_argument('--dbtype', choices=db_types.keys(), default=None)
 
     parser.add_argument('--dbname', type=str, default=None)
     parser.add_argument('--user', type=str, default=None)
@@ -55,11 +48,33 @@ def get_args():
 
     parser.add_argument('--queries-folder', type=str, default=None)
 
+    parser.add_argument('--api-key', type=str, default=None)
+    parser.add_argument('--notion-host', type=str, default='https://app.usenotion.com')
+
     return parser.parse_args()
 
+
+class ResultFormatError(Exception):
+    pass
+
 class PostgresExecutor:
-    def __init__(self, connection):
-        self.connection = connection
+
+    def __init__(self, args):
+        try:
+            import psycopg2
+        except ImportError:
+            print('psycopg2 is required but not installed', file=sys.stderr)
+            sys.exit(1)
+
+        self.extension = '.sql'
+
+        self.connection = psycopg2.connect(
+            dbname=args.dbname,
+            user=args.user,
+            password=args.password,
+            host=args.host,
+            port=args.port,
+        )
 
     def _execute_query(self, query_string):
         cursor = self.connection.cursor()
@@ -68,10 +83,88 @@ class PostgresExecutor:
 
     def _get_number_result(self, query_string):
         result = self._execute_query(query_string)
+
+        if len(result) != 1:
+            count = len(result)
+            raise ResultFormatError(
+                f'Expected 1 row to be returned, got {count}: ' + str(result))
+
+        if len(result[0]) != 1:
+            count = len(result[0])
+            raise ResultFormatError(
+                f'Expected 1 column to be returned, got {count}: ' + str(result))
+
         return result[0][0]
 
     def execute_query(self, query_string):
         return self._get_number_result(query_string)
+
+class MysqlExecutor:
+    def __init__(self, args):
+        try:
+            import _mysql
+        except ImportError:
+            print('mysqlclient is required but not installed', file=sys.stderr)
+            sys.exit(1)
+
+        self.extension = '.sql'
+
+        self.connection = _mysql.connect(
+            args.host,
+            args.user,
+            args.password,
+            args.dbname,
+        )
+
+    def _execute_query(self, query_string):
+        self.connection.query(query_string)
+        result = self.connection.store_result()
+        return result.fetch_row()
+
+    def execute_query(self, query_string):
+        result = self._execute_query(query_string)
+
+        if len(result) != 1:
+            count = len(result)
+            raise ResultFormatError(
+                f'Expected 1 row to be returned, got {count}: ' + str(result))
+
+        if len(result[0]) != 1:
+            count = len(result[0])
+            raise ResultFormatError(
+                f'Expected 1 column to be returned, got {count}: ' + str(result))
+
+        return result[0][0]
+
+
+class Reporter:
+    def __init__(self, api_key, notion_host):
+        self.api_key = api_key
+        self.notion_host = notion_host
+        self.headers = {
+            'Authorization': self.api_key,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+        }
+
+    def report(self, ingredient_key, value):
+        url = self.notion_host + '/api/v1/report'
+
+        json_data = {
+            'ingredient_key': ingredient_key,
+            'value': value,
+            'date': datetime.datetime.today().strftime('%Y-%m-%d'),
+        }
+
+        response = requests.post(url, json=json_data, headers=self.headers)
+        response.raise_for_status()
+
+        return response
+
+db_types = {
+    'postgres': PostgresExecutor,
+    'mysql': MysqlExecutor,
+}
 
 if __name__ == '__main__':
     main()
