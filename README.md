@@ -1,4 +1,5 @@
 #Notion SQL Reporter
+
 ##About
 The Notion SQL Reporter is designed to help automate the process of running SQL queries. Queries to run are placed into a folder. This program then runs those queries, and creates or updates the appropriate ingredient in Notion with the result of that query.
 
