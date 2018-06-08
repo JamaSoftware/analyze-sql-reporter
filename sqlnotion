@@ -64,7 +64,7 @@ def get_args():
     required.add_argument('--api-token', type=str, default=None, required=True,
         help='the api token of a notion account https://app.usenotion.com/api_control_panel')
 
-    parser.add_argument('--notion-host', type=str, default='https://app.usenotion.com',
+    parser.add_argument('--notion-host', type=str, default='https://analyze.jamacloud.com/',
         help=argparse.SUPPRESS)
 
     try:
